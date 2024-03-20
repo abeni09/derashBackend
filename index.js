@@ -201,7 +201,7 @@ async function createTables() {
 }
 
 // Call the function to create tables when the server starts
-// createTables();
+createTables();
 
 
 // Endpoint to login a member
