@@ -30,13 +30,13 @@ let DRAW_STARTED_AT = null;
 let Simulated_Days = null;
 // PostgreSQL database configuration
 const pool = new Pool({
-    ssl: true, // Whether to use SSL/TLS for the connection
+    ssl: true,
     user: 'derash_admin',
-    // host: 'dpg-cnq1fr0l5elc73d04rqg-a.oregon-postgres.render.com',
-    host: 'dpg-cnt66mg21fec73f8iq70-a.oregon-postgres.render.com',
-    database: 'derash_db',
+    // host: '78.46.175.135',
+    host: 'localhost',
+    database: 'derashdb',
     // password: 'XiLmYBfon89WBlMSavtGufFw3UtxorYP',
-    password: '8HNUfz7zyPWZ944nh7mIpSjurtMLbxdm',
+    password: 'UrFCr7meM7rUJxxCrELt',
     port: 5432,
 });
 // Define a function to drop a single table
@@ -63,7 +63,7 @@ async function createTables() {
       name VARCHAR(100),
       role VARCHAR(50),
       created_at TIMESTAMP,
-      created_by INTEGER 
+      created_by INTEGER,
       updated_at TIMESTAMP,
       updated_by INTEGER 
     )`);
@@ -164,10 +164,11 @@ async function createTables() {
     await pool.query(`CREATE TABLE IF NOT EXISTS LottoNumbers (
       id SERIAL PRIMARY KEY,
       deposited_at VARCHAR(20),
-      lotto_number INTEGER,
+      lotto_number VARCHAR(50),
       daily_contributed_amount DECIMAL(10, 2),
       deposit INTEGER,
       member INTEGER,
+      batch_number INTEGER,
       winner BOOLEAN,
       expired BOOLEAN,
       FOREIGN KEY (deposit) REFERENCES Deposit(id),
@@ -184,14 +185,24 @@ async function createTables() {
         FOREIGN KEY (member) REFERENCES Members(id),
         FOREIGN KEY (deposit) REFERENCES Deposit(id)
     )`);
+    // Create Draw table if it doesn't exist
+    await pool.query(`CREATE TABLE IF NOT EXISTS Draw (
+        id SERIAL PRIMARY KEY,
+        drawn_at TIMESTAMP,
+        draw_date VARCHAR(10),
+        drawn_by INTEGER,
+        timer INTEGER,
+        used BOOLEAN,
+        pot INTEGER,
+        FOREIGN KEY (drawn_by) REFERENCES Members(id)
+    )`);
     // Create Winners table if it doesn't exist
     await pool.query(`CREATE TABLE IF NOT EXISTS Winners (
         id SERIAL PRIMARY KEY,
-        drawn_at TIMESTAMP,
-        drawn_by INTEGER,
+        draw_id INTEGER,
         lotto_number INTEGER,
         won_amount DECIMAL(10, 2),
-        FOREIGN KEY (drawn_by) REFERENCES Members(id),
+        FOREIGN KEY (draw_id) REFERENCES Draw(id),
         FOREIGN KEY (lotto_number) REFERENCES LottoNumbers(id)
     )`);
     console.log('Tables created successfully');
@@ -250,29 +261,29 @@ app.post('/loginMember', async (req, res) => {
 
 app.post('/loginStaff', async (req, res) => {
     try {
-        const { email, password, confirm } = req.body;
-        if (!email || !password || confirm == null) {
+        const { phone, password, confirm } = req.body;
+        if (!phone || !password || confirm == null) {
             return res.status(400).json({ success: false, message: 'Request body is missing.' });
         }
 
         if (confirm === true) {
             const hashedPassword = await bcrypt.hash(password, 10);
-            await pool.query('UPDATE Users SET password = $1 WHERE email = $2', [hashedPassword, email]);
-            const result = await pool.query('SELECT * FROM Users WHERE email = $1', [email]);
+            await pool.query('UPDATE Users SET password = $1 WHERE phone = $2', [hashedPassword, phone]);
+            const result = await pool.query('SELECT * FROM Users WHERE phone = $1', [`+251${phone}`]);
             // Generate JWT token
-            const token = jwt.sign({ email: result.rows[0].email, role: result.rows[0].role, userId: result.rows[0].id }, SECRET_KEY, { expiresIn: '1h' });
+            const token = jwt.sign({ phone: result.rows[0].phone, role: result.rows[0].role, userId: result.rows[0].id }, SECRET_KEY, { expiresIn: '1h' });
             res.status(200).json({ message: 'Login successful', token: token, data: result.rows[0] });
         } else {
-            const result = await pool.query('SELECT * FROM Users WHERE email = $1', [email]);
+            const result = await pool.query('SELECT * FROM Users WHERE phone = $1', [`+251${phone}`]);
             if (result.rows.length === 1) {
                 const storedPassword = result.rows[0].password;
                 const passwordMatch = await bcrypt.compare(password, storedPassword);
                 if (passwordMatch) {
                     // Generate JWT token
-                    const token = jwt.sign({ email: result.rows[0].email, role: result.rows[0].role, userId: result.rows[0].id }, SECRET_KEY, { expiresIn: '1h' });
+                    const token = jwt.sign({ phone: result.rows[0].phone, role: result.rows[0].role, userId: result.rows[0].id }, SECRET_KEY, { expiresIn: '1h' });
                     res.status(200).json({ message: 'Login successful', token: token, data: result.rows[0] });
                 } else {
-                    res.status(401).json({ message: 'Invalid email or password' });
+                    res.status(401).json({ message: 'Invalid phone or password' });
                 }
             } else {
                 res.status(401).json({ message: 'User is not registered' });
@@ -364,50 +375,50 @@ app.post('/start-draw', async (req, res) => {
     }
   });
   // Endpoint to update site settings
-  app.post('/updateSiteSettings', async (req, res) => {
-    try {
-        if (!req.body || !req.body.editedItem) {
-            console.log('Request body or editedItem is missing');
-            return res.status(400).json({ success: false, message: 'Request body or editedItem is missing.' });
-        }
+//   app.post('/updateSiteSettings', async (req, res) => {
+//     try {
+//         if (!req.body || !req.body.editedItem) {
+//             console.log('Request body or editedItem is missing');
+//             return res.status(400).json({ success: false, message: 'Request body or editedItem is missing.' });
+//         }
         
-        const editedItem = req.body.editedItem; // Corrected destructuring
+//         const editedItem = req.body.editedItem; // Corrected destructuring
 
-        // Check if the record exists in the SiteSettings table
-        const checkResult = await pool.query('SELECT id FROM SiteSettings WHERE id = 1');
+//         // Check if the record exists in the SiteSettings table
+//         const checkResult = await pool.query('SELECT id FROM SiteSettings WHERE id = 1');
 
-        let query;
-        let queryParams;
-        if (checkResult.rows.length > 0) {
-            // Data exists, update the record
-            query = `
-                UPDATE SiteSettings 
-                SET ${Object.keys(editedItem).map((key, index) => `${key} = $${index + 1}`).join(', ')}
-                WHERE id = 1`;
-            queryParams = Object.values(editedItem);
-        } else {
-            // Data does not exist, insert the record
-            query = `
-                INSERT INTO SiteSettings (
-                    id,
-                    ${Object.keys(editedItem).join(', ')}
-                ) VALUES (
-                    1,
-                    ${Object.keys(editedItem).map((key, index) => `$${index + 1}`).join(', ')}
-                )`;
-            queryParams = Object.values(editedItem);
-        }
+//         let query;
+//         let queryParams;
+//         if (checkResult.rows.length > 0) {
+//             // Data exists, update the record
+//             query = `
+//                 UPDATE SiteSettings 
+//                 SET ${Object.keys(editedItem).map((key, index) => `${key} = $${index + 1}`).join(', ')}
+//                 WHERE id = 1`;
+//             queryParams = Object.values(editedItem);
+//         } else {
+//             // Data does not exist, insert the record
+//             query = `
+//                 INSERT INTO SiteSettings (
+//                     id,
+//                     ${Object.keys(editedItem).join(', ')}
+//                 ) VALUES (
+//                     1,
+//                     ${Object.keys(editedItem).map((key, index) => `$${index + 1}`).join(', ')}
+//                 )`;
+//             queryParams = Object.values(editedItem);
+//         }
 
-        await pool.query(query, queryParams);
+//         await pool.query(query, queryParams);
 
-        const statusCode = checkResult.rows.length > 0 ? 200 : 201;
-        const message = checkResult.rows.length > 0 ? 'Site settings updated successfully' : 'Site settings inserted successfully';
-        res.status(statusCode).json({ message });
-    } catch (error) {
-        console.error('Error checking and updating site settings', error);
-        res.status(500).json({ message: 'Internal Server Error' });
-    }
-});
+//         const statusCode = checkResult.rows.length > 0 ? 200 : 201;
+//         const message = checkResult.rows.length > 0 ? 'Site settings updated successfully' : 'Site settings inserted successfully';
+//         res.status(statusCode).json({ message });
+//     } catch (error) {
+//         console.error('Error checking and updating site settings', error);
+//         res.status(500).json({ message: 'Internal Server Error' });
+//     }
+// });
 
 
   
@@ -446,6 +457,17 @@ app.post('/start-draw', async (req, res) => {
       res.status(200).json({ members: members.rows });
     } catch (error) {
       console.error('Error fetching members', error);
+      res.status(500).json({ message: 'Internal Server Error' });
+    }
+  });  
+  // Endpoint to fetch members
+  app.get('/fetchUsers', async (req, res) => {
+    try {
+      const users = await pool.query('SELECT * FROM Users');
+      console.log("Users Count:", users.rowCount);
+      res.status(200).json({ users: users.rows });
+    } catch (error) {
+      console.error('Error fetching users', error);
       res.status(500).json({ message: 'Internal Server Error' });
     }
   });
@@ -524,8 +546,8 @@ app.post('/start-draw', async (req, res) => {
   
   // Endpoint to login user
   app.post('/loginUser', async (req, res) => {
-    const { email, password } = req.body;
     try {
+      const { email, password } = req.body;
       const result = await pool.query('SELECT * FROM Users WHERE email = $1 AND password = $2', [email, password]);
       if (result.rows.length === 1) {
         res.status(200).json({ message: 'Login successful', data: result.rows[0] });
@@ -567,9 +589,13 @@ app.get('/fetchSiteSettings', async (req, res) => {
   }
 });
 app.post('/processDeposit', async (req, res) => {
-  // var countStart = 2092500;
+  var countStart;
   // var Start = 23250;
-  const countStart = parseInt((await pool.query('SELECT * FROM public.lottonumbers order by lotto_number desc limit 1')).rows[0].lotto_number) + 1
+  try {
+    countStart = parseInt((await pool.query('SELECT * FROM public.lottonumbers order by lotto_number desc limit 1')).rows[0].lotto_number) + 1    
+  } catch (error) {
+    countStart = 0    
+  }
   const Start = countStart/90
   console.log('Start:', Start);
   console.log('countStart:', countStart);
@@ -731,20 +757,88 @@ app.post('/processDeposit', async (req, res) => {
 //         res.status(500).json({ message: 'Internal Server Error' });
 //     }
 // });
+app.post('/updateSiteSettings', async (req, res)=>{
+  try {
+    const { userId, updatedData } = req.body;
+    // console.log(userId);
+    // console.log(updatedData);
+    if (!userId || !updatedData) {
+        console.log('Request body is missing');
+        return res.status(400).json({ success: false, message: 'Request body or editedItem is missing.' });
+    }
 
+    const checkUser = await pool.query('select * from public."Users" where id = $1', [parseInt(userId)])
+    const user = checkUser.rows[0]
+    // console.log(user);
+    // console.log(checkUser.rowCount);
+    if (user && user.role == 'Admin') {
+      const tableName = 'siteSettings'; // Specify your table name
+
+      // Construct the dynamic column-value pairs from the JSON data, excluding null values
+      const columnValuePairs = Object.entries(updatedData)
+          .filter(([_, value]) => value !== null) // Exclude key-value pairs with null values
+          .map(([key, value]) => `${key} = '${value}'`);
+
+      const upsertQuery = async () => {
+          const id = 1; // Assuming you're checking for ID 1
+          const existingRowQuery = `SELECT id FROM ${tableName}`;
+          
+          try {
+              const rowCount = (await pool.query(existingRowQuery)).rowCount;
+              
+              if (rowCount > 0) {
+                  // Perform UPDATE if row exists
+                  const updateQuery = `
+                      UPDATE ${tableName}
+                      SET ${columnValuePairs.join(',')}
+                      WHERE id = $1;
+                  `;
+                  await pool.query(updateQuery, [id]);
+                  console.log(`Updated database for id ${id}`);
+              } else {
+                  // Perform INSERT if row doesn't exist
+                  const insertQuery = `
+                      INSERT INTO ${tableName} (${Object.keys(updatedData).join(',')})
+                      VALUES (${Object.values(updatedData).map(value => value !== null ? `'${value}'` : 'DEFAULT').join(',')});
+                  `;
+                  await pool.query(insertQuery);
+                  console.log(`Inserted new row into database for id ${id}`);
+              }
+              
+              res.status(201).json({ message: 'Site Settings updated successfully' });
+          } catch (error) {
+              console.error('Error executing UPSERT operation:', error);
+              res.status(400).json({ message: `Error executing UPSERT operation: ${error}` });
+          }
+      };
+
+      upsertQuery(); // Call the function to perform the UPSERT operation
+
+    }
+    else{
+      console.error(`User is not authorized`);
+      res.status(400).json({ message: `User is not authorized!` });
+    }
+    
+  } catch (error) {
+    console.error(`Error updating site settings: `, error);
+    res.status(400).json({ message: `Error updating: ${error}` });
+    
+  }
+})
 
     // Endpoint to generate members
 app.post('/generateMembers', async (req, res) => {
     try {
         // const { count } = req.body;
-        const count = 100000;
+        const count = 100;
         // if (count === undefined || count <= 0) {
         //     throw new Error('The "count" parameter is invalid value.');
         // }
         const startTime = Date.now()
 
         // Generate 'count' number of members
-        for (let i = 71329; i < count; i++) {
+        for (let i = 0; i < count; i++) {
             const member = generateMember(i); // Call a function to generate member data
             await insertMember(member, i); // Insert the generated member into the database
         }
@@ -764,7 +858,7 @@ async function processDeposit(initCountStart, initStart){
     var countStart = initCountStart
     const siteSettingQuery = await pool.query('SELECT * FROM SiteSettings');
     const settings = siteSettingQuery.rows[0];
-    console.log(settings);
+    // console.log(settings);
   //  await pool.query('DELETE FROM lottosetting');
   //  await pool.query('DELETE FROM lottonumbers');
   //  await pool.query('DELETE FROM dailycontribution');
@@ -901,6 +995,17 @@ async function processDeposit(initCountStart, initStart){
       //   const serviceFeeValues = bulkServiceFeeData.reduce((acc, data) => [...acc, ...data], []); // Flatten the array
       //   promises.push(pool.query(serviceFeeQuery, serviceFeeValues));
       // }
+
+      // For LottoNumbers table
+      if (bulkLottoNumberData.length > 0) {
+        const lottoNumbersQuery = `
+            INSERT INTO LottoNumbers (batch_number, deposited_at, lotto_number, daily_contributed_amount, winner, expired, member) 
+            VALUES 
+            ${bulkLottoNumberData.map((_, index) => `($${index * 7 + 1}, $${index * 7 + 2}, $${index * 7 + 3}, $${index * 7 + 4}, $${index * 7 + 5}, $${index * 7 + 6}, $${index * 7 + 7})`).join(', ')}
+        `;
+        const lottoNumbersValues = bulkLottoNumberData.reduce((acc, data) => [...acc, ...data], []); // Flatten the array
+        promises.push(pool.query(lottoNumbersQuery, lottoNumbersValues));
+      }
   
         // Construct bulk insert query for Deposits
       if (bulkDepositData.length > 0) {
@@ -914,16 +1019,6 @@ async function processDeposit(initCountStart, initStart){
         promises.push(pool.query(insertDepositQuery, insertDepositValues));
       }
   
-      // For LottoNumbers table
-      if (bulkLottoNumberData.length > 0) {
-        const lottoNumbersQuery = `
-            INSERT INTO LottoNumbers (batch_number, deposited_at, lotto_number, daily_contributed_amount, winner, expired, member) 
-            VALUES 
-            ${bulkLottoNumberData.map((_, index) => `($${index * 7 + 1}, $${index * 7 + 2}, $${index * 7 + 3}, $${index * 7 + 4}, $${index * 7 + 5}, $${index * 7 + 6}, $${index * 7 + 7})`).join(', ')}
-        `;
-        const lottoNumbersValues = bulkLottoNumberData.reduce((acc, data) => [...acc, ...data], []); // Flatten the array
-        promises.push(pool.query(lottoNumbersQuery, lottoNumbersValues));
-      }
   
       // Construct bulk update query for Members
       // if (bulkMembersData.length > 0) {
