@@ -30,15 +30,31 @@ let DRAW_STARTED_AT = null;
 let Simulated_Days = null;
 // PostgreSQL database configuration
 const pool = new Pool({
-    ssl: true,
+    // ssl: {
+    //   rejectUnauthorized: true, // Reject connections if the server's SSL certificate is not trusted
+    //   ca: fs.readFileSync('certs/ca.crt')
+    // },
+    // ssl: true,
     user: 'derash_admin',
+    // host: 'dpg-cnq1fr0l5elc73d04rqg-a.oregon-postgres.render.com',
     // host: '78.46.175.135',
-    host: 'localhost',
+    host: 'Derash',
     database: 'derashdb',
     // password: 'XiLmYBfon89WBlMSavtGufFw3UtxorYP',
     password: 'UrFCr7meM7rUJxxCrELt',
     port: 5432,
 });
+// // PostgreSQL database configuration
+// const pool = new Pool({
+//     ssl: true, // Whether to use SSL/TLS for the connection
+//     user: 'derash_admin',
+//     // host: 'dpg-cnq1fr0l5elc73d04rqg-a.oregon-postgres.render.com',
+//     host: 'dpg-cnt66mg21fec73f8iq70-a.oregon-postgres.render.com',
+//     database: 'derashdb',
+//     // password: 'XiLmYBfon89WBlMSavtGufFw3UtxorYP',
+//     password: '8HNUfz7zyPWZ944nh7mIpSjurtMLbxdm',
+//     port: 5432,
+// });
 // Define a function to drop a single table
 async function dropTable(tableName) {
     try {
@@ -60,6 +76,7 @@ async function createTables() {
       id SERIAL PRIMARY KEY,
       email VARCHAR(100),
       phone VARCHAR(20),
+      password VARCHAR(255),
       name VARCHAR(100),
       role VARCHAR(50),
       created_at TIMESTAMP,
@@ -67,13 +84,33 @@ async function createTables() {
       updated_at TIMESTAMP,
       updated_by INTEGER 
     )`);
+    pool.query(`
+      DO $$ 
+      BEGIN 
+        IF NOT EXISTS (SELECT 1 FROM public.users WHERE id = 1) THEN 
+          INSERT INTO public.users(
+            email, phone, name, role, created_at)
+          VALUES ('admin@derash.com', '+251999999999', 'admin', 'Admin', NOW()); 
+        END IF; 
+      END $$;
+    `, (error, results) => {
+      if (error) {
+        console.error('Error creating derash admin:', error);
+        // Handle error
+      } else {
+        console.log('derash admin created successfully');
+        // Handle success
+      }
+    });
+
     // Create Members table if it doesn't exist
     await pool.query(`CREATE TABLE IF NOT EXISTS Members (
         id SERIAL PRIMARY KEY,
         name VARCHAR(100),
         age INTEGER,
-        gender VARCHAR(5),
-        phone VARCHAR(15),
+        gender VARCHAR(10),
+        phone VARCHAR(20),
+        password VARCHAR(255),
         firstDepositDate DATE,
         lastDate varchar(10),
         isOnline BOOLEAN,
@@ -86,7 +123,7 @@ async function createTables() {
         woreda VARCHAR(10),
         house_number VARCHAR(10),
         respondent_name VARCHAR(100),
-        respondent_phone VARCHAR(15),
+        respondent_phone VARCHAR(20),
         respondent_relation VARCHAR(20),
         heir_name VARCHAR(100),
         heir_phone VARCHAR(15),
@@ -268,25 +305,30 @@ app.post('/loginStaff', async (req, res) => {
 
         if (confirm === true) {
             const hashedPassword = await bcrypt.hash(password, 10);
-            await pool.query('UPDATE Users SET password = $1 WHERE phone = $2', [hashedPassword, phone]);
-            const result = await pool.query('SELECT * FROM Users WHERE phone = $1', [`+251${phone}`]);
+            await pool.query('UPDATE users SET password = $1 WHERE phone = $2', [hashedPassword, `+251${phone}`]);
+            const result = await pool.query('SELECT * FROM users WHERE phone = $1', [`+251${phone}`]);
             // Generate JWT token
             const token = jwt.sign({ phone: result.rows[0].phone, role: result.rows[0].role, userId: result.rows[0].id }, SECRET_KEY, { expiresIn: '1h' });
             res.status(200).json({ message: 'Login successful', token: token, data: result.rows[0] });
         } else {
-            const result = await pool.query('SELECT * FROM Users WHERE phone = $1', [`+251${phone}`]);
+            const result = await pool.query('SELECT * FROM users WHERE phone = $1', [`+251${phone}`]);
             if (result.rows.length === 1) {
                 const storedPassword = result.rows[0].password;
-                const passwordMatch = await bcrypt.compare(password, storedPassword);
-                if (passwordMatch) {
-                    // Generate JWT token
-                    const token = jwt.sign({ phone: result.rows[0].phone, role: result.rows[0].role, userId: result.rows[0].id }, SECRET_KEY, { expiresIn: '1h' });
-                    res.status(200).json({ message: 'Login successful', token: token, data: result.rows[0] });
+                if (storedPassword != null) {
+                  const passwordMatch = await bcrypt.compare(password, storedPassword);
+                  if (passwordMatch) {
+                      // Generate JWT token
+                      const token = jwt.sign({ phone: result.rows[0].phone, role: result.rows[0].role, userId: result.rows[0].id }, SECRET_KEY, { expiresIn: '1h' });
+                      res.status(200).json({ message: 'Login successful', token: token, data: result.rows[0] });
+                  } else {
+                      res.status(401).json({ message: 'Invalid phone or password' });
+                  }                  
                 } else {
-                    res.status(401).json({ message: 'Invalid phone or password' });
+                  res.status(200).json({message: 'Confirm your password please!', confirm: true})
+                  
                 }
             } else {
-                res.status(401).json({ message: 'User is not registered' });
+                res.status(401).json({ message: `User is not registered +251${phone}` });
             }
         }
     } catch (error) {
@@ -827,29 +869,57 @@ app.post('/updateSiteSettings', async (req, res)=>{
   }
 })
 
-    // Endpoint to generate members
+// Endpoint to generate members
 app.post('/generateMembers', async (req, res) => {
-    try {
-        // const { count } = req.body;
-        const count = 100;
-        // if (count === undefined || count <= 0) {
-        //     throw new Error('The "count" parameter is invalid value.');
-        // }
-        const startTime = Date.now()
-
-        // Generate 'count' number of members
-        for (let i = 0; i < count; i++) {
-            const member = generateMember(i); // Call a function to generate member data
-            await insertMember(member, i); // Insert the generated member into the database
-        }
-        const endTime = Date.now()
-        const diff = (endTime - startTime)/1000 
-        res.status(201).json({ message: `${count} members generated successfully in ${diff}` });
-    } catch (error) {
-        console.error('Error generating members', error);
-        res.status(400).json({ message: error.message });
-    }
+  try {
+      const count = req.body.count || 100; // Default to generating 100 members if count is not provided
+      const batchSize = 5000; // Number of members per batch
+      const startTime = Date.now();
+      
+      for (let i = 0; i < count; i += batchSize) {
+          const batchCount = Math.min(batchSize, count - i); // Calculate the size of the current batch
+          const members = [];
+          
+          // Generate members for the current batch
+          for (let j = 0; j < batchCount; j++) {
+              const member = generateMember(i + j); // Call a function to generate member data
+              members.push(member);
+          }
+          
+          await insertMembers(members); // Insert the current batch of members into the database
+      }
+      
+      const endTime = Date.now();
+      const diff = (endTime - startTime) / 1000;
+      res.status(201).json({ message: `${count} members generated successfully in ${diff} seconds` });
+  } catch (error) {
+      console.error('Error generating members', error);
+      res.status(500).json({ message: 'Internal Server Error' });
+  }
 });
+
+// app.post('/generateMembers', async (req, res) => {
+//   try {
+//       const count = req.body.count || 100; // Default to generating 100 members if count is not provided
+//       const startTime = Date.now();
+      
+//       const members = [];
+//       for (let i = 0; i < count; i++) {
+//           const member = generateMember(i); // Call a function to generate member data
+//           members.push(member);
+//       }
+      
+//       await insertMember(members); // Batch insert the generated members into the database
+      
+//       const endTime = Date.now();
+//       const diff = (endTime - startTime) / 1000;
+//       res.status(201).json({ message: `${count} members generated successfully in ${diff} seconds` });
+//   } catch (error) {
+//       console.error('Error generating members', error);
+//       res.status(500).json({ message: 'Internal Server Error' });
+//   }
+// });
+
 async function processDeposit(initCountStart, initStart){
   try {  const amount = 4500;
     const user = 1;
@@ -1066,7 +1136,7 @@ async function processDeposit(initCountStart, initStart){
     
   } catch (error) {
     console.log(error);
-    processDeposit(countStart, Start)
+    // processDeposit(countStart, Start)
     
   }
 
@@ -1114,7 +1184,31 @@ async function processDeposit(initCountStart, initStart){
       throw error; // Propagate the error to the caller
     }
   }
-  
+
+  async function insertMembers(members) {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN'); // Start a transaction
+        
+        // Construct the SQL query to insert multiple members
+        const values = members.map((member, index) => `($${index * 9 + 1}, $${index * 9 + 2}, $${index * 9 + 3}, $${index * 9 + 4}, $${index * 9 + 5}, $${index * 9 + 6}, $${index * 9 + 7}, $${index * 9 + 8}, $${index * 9 + 9})`).join(',');
+        const queryText = `INSERT INTO Members (name, age, gender, phone, isOnline, isBanned, pot, winAmount, won) VALUES ${values}`;
+        
+        // Extract values from each member object
+        const memberValues = members.flatMap(member => [member.name, member.age, member.gender, member.phone, member.isOnline, member.isBanned, member.pot, member.winAmount, member.won]);
+        
+        // Execute the query with parameters
+        await client.query(queryText, memberValues);
+        
+        await client.query('COMMIT'); // Commit the transaction
+    } catch (error) {
+        await client.query('ROLLBACK'); // Rollback the transaction in case of error
+        throw error; // Rethrow the error to be caught by the caller
+    } finally {
+        client.release(); // Release the client back to the pool
+    }
+}
+
 
 
   function generateRandomAge(min, max) {
@@ -1232,6 +1326,6 @@ function daysAheadOfToday(formattedDate) {
 }
   // Start the Express server
   app.listen(port, () => {
-    console.log(`Server is running on http://localhost:${port}`);
+    console.log(`Server is running on http://Derash:${port}`);
   });
   
