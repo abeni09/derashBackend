@@ -190,6 +190,27 @@ async function createTables() {
       systemStartedAt TIMESTAMP,
       FOREIGN KEY (updated_by) REFERENCES Users(id)
     )`);
+    pool.query(`
+      DO $$ 
+      BEGIN 
+        IF NOT EXISTS (SELECT 1 FROM public.lottoSetting WHERE id = 1) THEN 
+        INSERT INTO public.sitesettings(
+          deposit_contribution_after, deposit_contribution_before, daily_number_of_winners, drawstarted,
+           draw_timeout, daily_win_amount, max_deposit_days, max_days_to_penalize, max_days_to_wait, 
+           min_deposit_days, memeber_spin_timeout, batch_amount, service_fee, penality_fee, maxmimum_members,
+            site_name, server_url)
+          VALUES (550, 50, 5, false, 1, 1000000, 30, 30, 15, 15, 20, 10, 50, 80, 100000, 'Derash', 'https://localhost');
+        END IF; 
+      END $$;
+    `, (error, results) => {
+      if (error) {
+        console.error('Error creating lotto setting:', error);
+        // Handle error
+      } else {
+        console.log('lotto setting created successfully');
+        // Handle success
+      }
+    });
     // Create LottoSetting table if it doesn't exist
     await pool.query(`CREATE TABLE IF NOT EXISTS LottoSetting (
       id SERIAL PRIMARY KEY,
